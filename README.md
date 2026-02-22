@@ -21,6 +21,15 @@ turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
 ```
 
+## Install from PyPI
+
+```bash
+pip install xuanwo-turl
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+PyPI package name is `xuanwo-turl`, and installed CLI command remains `turl`.
+
 ## Environment Variables
 
 - `CODEX_HOME`: official Codex home directory
