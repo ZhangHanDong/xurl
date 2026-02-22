@@ -1,6 +1,6 @@
 ---
 name: turl
-description: Use the turl CLI to resolve a Codex or Claude thread URI and print thread content in markdown or raw JSONL.
+description: Use the turl CLI to resolve Codex, Claude, or OpenCode thread URIs and print thread content in markdown or raw records.
 ---
 
 # turl
@@ -18,33 +18,47 @@ turl --version
 
 ## When to Use
 
-- The user gives a `codex://...` or `claude://...` URI.
+- The user gives a `codex://...`, `codex://threads/...`, `claude://...`, or `opencode://...` URI.
 - The user asks to inspect, view, or fetch thread content.
 
 ## Input
 
 - A thread URI in one of these forms:
   - `codex://<session_id>`
+  - `codex://threads/<session_id>`
   - `claude://<session_id>`
+  - `opencode://<session_id>`
 
 ## Commands
 
 Default output (filtered markdown with user/assistant messages):
 
 ```bash
-turl "codex://019c871c-b1f9-7f60-9c4f-87ed09f13592"
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
 Raw JSONL output:
 
 ```bash
-turl "codex://019c871c-b1f9-7f60-9c4f-87ed09f13592" --raw
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
 ```
 
 Claude thread example:
 
 ```bash
-turl "claude://2823d1df-720a-4c31-ac55-ae8ba726721f"
+turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
+```
+
+Codex deep-link example:
+
+```bash
+turl codex://threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+OpenCode thread example:
+
+```bash
+turl opencode://ses_43a90e3adffejRgrTdlJa48CtE
 ```
 
 ## Agent Behavior

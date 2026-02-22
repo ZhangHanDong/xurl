@@ -4,88 +4,56 @@
 
 ## Features
 
-- Supports URI input:
+- Multi-agent thread resolution:
+  - <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex
+  - <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude
+  - <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
+- Default output is markdown with user/assistant-focused content.
+- `--raw` outputs raw thread records.
+- Automatically respects official environment variables and default local data roots for each supported agent.
+
+## Install
+
+```bash
+npx skills add Xuanwo/turl
+```
+
+## Agents
+
+### Codex
+
+- Supported URIs:
   - `codex://<session_id>`
   - `codex://threads/<session_id>`
-  - `claude://<session_id>`
-  - `opencode://<session_id>`
-- Resolves thread files from local storage roots.
-- Default output is markdown:
-  - includes only `user` / `assistant` messages
-  - filters tool-call related records
-- `--raw` outputs original JSONL content.
-  - for OpenCode, `--raw` outputs normalized JSONL materialized from local SQLite records.
-
-## CLI
+- Examples:
 
 ```bash
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
 turl codex://threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+### Claude
+
+- Supported URI:
+  - `claude://<session_id>`
+- Example:
+
+```bash
 turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
+```
+
+### OpenCode
+
+- Supported URI:
+  - `opencode://<session_id>`
+- Example:
+
+```bash
 turl opencode://ses_43a90e3adffejRgrTdlJa48CtE
+```
+
+### Raw Output
+
+```bash
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
 ```
-
-## Install from PyPI
-
-```bash
-pip install xuanwo-turl
-turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
-```
-
-PyPI package name is `xuanwo-turl`, and installed CLI command remains `turl`.
-
-## Install Codex Skill
-
-This repository also includes a Codex skill at `skills/turl` for agents that need to view thread content with `turl`.
-
-```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
-  --repo Xuanwo/turl \
-  --path skills/turl
-```
-
-## Environment Variables
-
-- `CODEX_HOME`: official Codex home directory
-- Codex default root: `~/.codex`
-
-- `CLAUDE_CONFIG_DIR`: official Claude Code config/data directory
-- Claude default root: `~/.claude`
-
-- `XDG_DATA_HOME/opencode`: OpenCode data root
-- OpenCode default root: `~/.local/share/opencode`
-
-Resolution precedence:
-
-- Codex: `CODEX_HOME` > `~/.codex`
-- Claude: `CLAUDE_CONFIG_DIR` > `~/.claude`
-- OpenCode: `XDG_DATA_HOME/opencode` > `~/.local/share/opencode`
-
-## URI Rules
-
-- URI format:
-  - `codex://<session_id>`
-  - `codex://threads/<session_id>`
-  - `claude://<session_id>`
-  - `opencode://<session_id>`
-- Supported schemes: `codex`, `claude`, `opencode`
-- Session ID rules:
-  - `codex`, `claude`: UUID-like format
-  - `opencode`: `ses_` prefix with alphanumeric body
-
-## Exit Behavior
-
-- success: exit code `0`
-- failure (not found, empty/unreadable file, invalid URI, etc.): non-zero exit code and error message on `stderr`
-
-## Project Layout
-
-- `turl-core`: URI parsing, provider resolvers, reading, rendering
-- `turl-cli`: CLI wrapper around `turl-core`
-
-## Current Scope
-
-- local filesystem only
-- providers: Codex, Claude, and OpenCode
-- no remote fetching
