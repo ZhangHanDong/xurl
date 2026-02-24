@@ -909,6 +909,7 @@ name = "xurl-core"
 version = "0.0.15"
 dependencies = [
  "dirs",
+ "libc",
  "once_cell",
  "regex",
  "rusqlite",

@@ -52,12 +52,17 @@ pub enum XurlError {
         source: std::io::Error,
     },
 
+    #[cfg(feature = "sqlite")]
     #[error("sqlite error on {path}: {source}")]
     Sqlite {
         path: PathBuf,
         #[source]
         source: rusqlite::Error,
     },
+
+    #[cfg(not(feature = "sqlite"))]
+    #[error("sqlite error on {path}: {detail}")]
+    Sqlite { path: PathBuf, detail: String },
 
     #[error("invalid json line in {path} at line {line}: {source}")]
     InvalidJsonLine {

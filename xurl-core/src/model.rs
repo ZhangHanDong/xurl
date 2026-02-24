@@ -2,8 +2,9 @@ use std::fmt;
 use std::path::PathBuf;
 
 use serde::Serialize;
+use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum ProviderKind {
     Amp,
     Codex,
@@ -157,4 +158,31 @@ pub struct PiEntryListView {
     pub entries: Vec<PiEntryListItem>,
     #[serde(skip_serializing)]
     pub warnings: Vec<String>,
+}
+
+/// Lightweight subagent info for monitoring / tree views.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentInfo {
+    pub provider: ProviderKind,
+    pub main_session_id: String,
+    pub agent_id: String,
+    pub status: String,
+    pub last_update: Option<String>,
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolCall {
+    pub name: String,
+    pub args: Value,
+    pub call_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ActiveSession {
+    pub provider: ProviderKind,
+    pub session_id: String,
+    pub path: PathBuf,
+    pub mtime_epoch: u64,
+    pub is_active: bool,
 }

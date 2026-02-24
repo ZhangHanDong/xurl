@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "sqlite")]
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -7,14 +9,16 @@ use serde_json::Value;
 
 use crate::error::{Result, XurlError};
 use crate::model::{
-    PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
+    PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread, SubagentInfo,
     SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
     SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
+#[cfg(feature = "sqlite")]
 use crate::provider::codex::CodexProvider;
 use crate::provider::gemini::GeminiProvider;
+#[cfg(feature = "sqlite")]
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
 use crate::provider::{Provider, ProviderRoots};
@@ -25,9 +29,11 @@ const STATUS_PENDING_INIT: &str = "pendingInit";
 const STATUS_RUNNING: &str = "running";
 const STATUS_COMPLETED: &str = "completed";
 const STATUS_ERRORED: &str = "errored";
+#[cfg(feature = "sqlite")]
 const STATUS_SHUTDOWN: &str = "shutdown";
 const STATUS_NOT_FOUND: &str = "notFound";
 
+#[cfg(feature = "sqlite")]
 #[derive(Debug, Default, Clone)]
 struct AgentTimeline {
     events: Vec<SubagentLifecycleEvent>,
@@ -51,13 +57,25 @@ struct ClaudeAgentRecord {
 pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<ResolvedThread> {
     match uri.provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(&uri.session_id),
+        #[cfg(feature = "sqlite")]
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(&uri.session_id),
+        #[cfg(not(feature = "sqlite"))]
+        ProviderKind::Codex => Err(XurlError::InvalidMode(format!(
+            "provider {} requires the 'sqlite' feature",
+            uri.provider
+        ))),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(&uri.session_id),
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(&uri.session_id),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(&uri.session_id),
+        #[cfg(feature = "sqlite")]
         ProviderKind::Opencode => {
             OpencodeProvider::new(&roots.opencode_root).resolve(&uri.session_id)
         }
+        #[cfg(not(feature = "sqlite"))]
+        ProviderKind::Opencode => Err(XurlError::InvalidMode(format!(
+            "provider {} requires the 'sqlite' feature",
+            uri.provider
+        ))),
     }
 }
 
@@ -82,6 +100,152 @@ pub fn render_thread_markdown(uri: &ThreadUri, resolved: &ResolvedThread) -> Res
     let raw = read_thread_raw(&resolved.path)?;
     let markdown = render::render_markdown(uri, &resolved.path, &raw)?;
     Ok(strip_frontmatter(markdown))
+}
+
+/// Return a structured JSON representation of a resolved thread.
+///
+/// Includes messages, tool calls, and resolution metadata — suitable
+/// for machine consumption (monitoring, dashboards, etc.).
+pub fn resolve_thread_json(uri: &ThreadUri, resolved: &ResolvedThread) -> Result<Value> {
+    let raw = read_thread_raw(&resolved.path)?;
+    let messages = render::extract_messages(uri.provider, &resolved.path, &raw)?;
+    let tool_calls = render::extract_tool_calls(uri.provider, &resolved.path, &raw)?;
+
+    let messages_json: Vec<Value> = messages
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "role": m.role.to_string(),
+                "text": m.text,
+            })
+        })
+        .collect();
+
+    let tool_calls_json: Vec<Value> = tool_calls
+        .iter()
+        .map(|tc| {
+            serde_json::json!({
+                "name": tc.name,
+                "args": tc.args,
+                "call_type": tc.call_type,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "uri": uri.as_agents_string(),
+        "provider": uri.provider.to_string(),
+        "session_id": uri.session_id,
+        "thread_source": resolved.path.display().to_string(),
+        "resolution": {
+            "source": resolved.metadata.source,
+            "candidate_count": resolved.metadata.candidate_count,
+            "warnings": resolved.metadata.warnings,
+        },
+        "messages": messages_json,
+        "message_count": messages.len(),
+        "tool_calls": tool_calls_json,
+        "tool_call_count": tool_calls.len(),
+    }))
+}
+
+/// List subagents for a resolved main thread (lightweight API for monitors).
+///
+/// Supports Claude and Codex (with `sqlite` feature). Other providers
+/// return an empty list. Does not perform full thread rendering — only
+/// scans for subagent metadata.
+pub fn list_subagents(resolved_main: &ResolvedThread) -> Vec<SubagentInfo> {
+    match resolved_main.provider {
+        ProviderKind::Claude => list_claude_subagents(resolved_main),
+        #[cfg(feature = "sqlite")]
+        ProviderKind::Codex => list_codex_subagents(resolved_main),
+        _ => Vec::new(),
+    }
+}
+
+fn list_claude_subagents(resolved_main: &ResolvedThread) -> Vec<SubagentInfo> {
+    let mut warnings = Vec::new();
+    let records = discover_claude_agents(resolved_main, &resolved_main.session_id, &mut warnings);
+    records
+        .into_iter()
+        .map(|r| SubagentInfo {
+            provider: ProviderKind::Claude,
+            main_session_id: resolved_main.session_id.clone(),
+            agent_id: r.agent_id,
+            status: r.status,
+            last_update: r.last_update,
+            path: Some(r.path),
+        })
+        .collect()
+}
+
+#[cfg(feature = "sqlite")]
+fn list_codex_subagents(resolved_main: &ResolvedThread) -> Vec<SubagentInfo> {
+    // Codex subagent discovery requires reading the parent rollout for
+    // spawn_agent events. We reuse the existing parsing infrastructure.
+    let raw = match read_thread_raw(&resolved_main.path) {
+        Ok(raw) => raw,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut infos = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+
+        // Look for spawn_agent events
+        let event_type = value
+            .get("payload")
+            .and_then(|p| p.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+
+        if event_type == "spawn_agent" {
+            let agent_id = value
+                .get("payload")
+                .and_then(|p| p.get("agent_id").or_else(|| p.get("agentId")))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+
+            let timestamp = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+
+            infos.push(SubagentInfo {
+                provider: ProviderKind::Codex,
+                main_session_id: resolved_main.session_id.clone(),
+                agent_id,
+                status: STATUS_RUNNING.to_string(),
+                last_update: timestamp,
+                path: None,
+            });
+        }
+
+        // Look for close_agent events to update status
+        if event_type == "close_agent" {
+            let agent_id = value
+                .get("payload")
+                .and_then(|p| p.get("agent_id").or_else(|| p.get("agentId")))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if let Some(info) = infos.iter_mut().find(|i| i.agent_id == agent_id) {
+                info.status = STATUS_COMPLETED.to_string();
+                info.last_update = value
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+            }
+        }
+    }
+
+    infos
 }
 
 pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Result<String> {
@@ -212,7 +376,13 @@ pub fn resolve_subagent_view(
     }
 
     match uri.provider {
+        #[cfg(feature = "sqlite")]
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
+        #[cfg(not(feature = "sqlite"))]
+        ProviderKind::Codex => Err(XurlError::InvalidMode(format!(
+            "provider {} requires the 'sqlite' feature",
+            uri.provider
+        ))),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
         _ => Err(XurlError::UnsupportedSubagentProvider(
             uri.provider.to_string(),
@@ -483,6 +653,7 @@ pub fn render_pi_entry_list_markdown(view: &PiEntryListView) -> String {
     output
 }
 
+#[cfg(feature = "sqlite")]
 fn resolve_codex_subagent_view(
     uri: &ThreadUri,
     roots: &ProviderRoots,
@@ -512,6 +683,7 @@ fn resolve_codex_subagent_view(
     )))
 }
 
+#[cfg(feature = "sqlite")]
 fn build_codex_list_view(
     uri: &ThreadUri,
     roots: &ProviderRoots,
@@ -563,6 +735,7 @@ fn build_codex_list_view(
     }
 }
 
+#[cfg(feature = "sqlite")]
 fn build_codex_detail_view(
     uri: &ThreadUri,
     roots: &ProviderRoots,
@@ -637,6 +810,7 @@ fn build_codex_detail_view(
     }
 }
 
+#[cfg(feature = "sqlite")]
 fn resolve_codex_child_thread(
     agent_id: &str,
     main_thread_id: &str,
@@ -665,6 +839,7 @@ fn resolve_codex_child_thread(
     Some((thread_ref, evidence, last_update))
 }
 
+#[cfg(feature = "sqlite")]
 fn resolve_codex_child_resolved(
     agent_id: &str,
     main_thread_id: &str,
@@ -692,6 +867,7 @@ fn resolve_codex_child_resolved(
     Some((resolved, evidence, thread_ref))
 }
 
+#[cfg(feature = "sqlite")]
 fn infer_codex_child_status(raw: &str, path: &Path) -> Option<String> {
     let mut has_assistant_message = false;
     let mut has_error = false;
@@ -732,6 +908,7 @@ fn infer_codex_child_status(raw: &str, path: &Path) -> Option<String> {
     }
 }
 
+#[cfg(feature = "sqlite")]
 fn parse_codex_parent_lifecycle(
     raw: &str,
     timelines: &mut BTreeMap<String, AgentTimeline>,
@@ -919,6 +1096,7 @@ fn parse_codex_parent_lifecycle(
     warnings
 }
 
+#[cfg(feature = "sqlite")]
 fn infer_state_from_status_payload(payload: &Value) -> Option<String> {
     let status = payload.get("status")?;
 
@@ -946,6 +1124,7 @@ fn infer_state_from_status_payload(payload: &Value) -> Option<String> {
     None
 }
 
+#[cfg(feature = "sqlite")]
 fn infer_status_from_timeline(timeline: &AgentTimeline, child_exists: bool) -> (String, String) {
     if timeline.states.iter().any(|state| state == STATUS_ERRORED) {
         return (STATUS_ERRORED.to_string(), "parent_rollout".to_string());
@@ -976,6 +1155,7 @@ fn infer_status_from_timeline(timeline: &AgentTimeline, child_exists: bool) -> (
     (STATUS_NOT_FOUND.to_string(), "inferred".to_string())
 }
 
+#[cfg(feature = "sqlite")]
 fn infer_status_for_detail(
     timeline: &AgentTimeline,
     child_status: Option<String>,
@@ -991,6 +1171,7 @@ fn infer_status_for_detail(
     (status, source)
 }
 
+#[cfg(feature = "sqlite")]
 fn extract_codex_parent_thread_id(raw: &str) -> Option<String> {
     let first = raw.lines().find(|line| !line.trim().is_empty())?;
     let value = serde_json::from_str::<Value>(first).ok()?;
@@ -1322,6 +1503,7 @@ fn normalize_agent_id(agent_id: &str) -> String {
         .to_string()
 }
 
+#[cfg(feature = "sqlite")]
 fn extract_last_timestamp(raw: &str) -> Option<String> {
     for line in raw.lines().rev() {
         if line.trim().is_empty() {
@@ -1524,7 +1706,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::service::{extract_last_timestamp, read_thread_raw};
+    use crate::service::read_thread_raw;
 
     #[test]
     fn empty_file_returns_error() {
@@ -1536,11 +1718,100 @@ mod tests {
         assert!(format!("{err}").contains("thread file is empty"));
     }
 
+    #[cfg(feature = "sqlite")]
     #[test]
     fn extract_last_timestamp_from_jsonl() {
+        use crate::service::extract_last_timestamp;
+
         let raw =
             "{\"timestamp\":\"2026-02-23T00:00:01Z\"}\n{\"timestamp\":\"2026-02-23T00:00:02Z\"}\n";
         let timestamp = extract_last_timestamp(raw).expect("must extract timestamp");
         assert_eq!(timestamp, "2026-02-23T00:00:02Z");
+    }
+
+    #[test]
+    fn list_subagents_claude_discovers_sidechain_agents() {
+        use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
+        use crate::service::list_subagents;
+
+        let temp = tempdir().expect("tempdir");
+        // Create a main thread file
+        let project_dir = temp.path();
+        let main_path = project_dir.join("main-session.jsonl");
+        fs::write(&main_path, "{\"type\":\"user\"}\n").expect("write");
+
+        // Create a sidechain agent file in the subagents dir
+        let subagents_dir = project_dir.join("main-session").join("subagents");
+        fs::create_dir_all(&subagents_dir).expect("mkdir");
+        let agent_file = subagents_dir.join("agent-abc.jsonl");
+        let agent_content = format!(
+            "{}\n{}\n",
+            r#"{"agentId":"abc","isSidechain":true,"sessionId":"main-session","timestamp":"2026-02-24T00:00:01Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"timestamp":"2026-02-24T00:00:02Z"}"#,
+        );
+        fs::write(&agent_file, agent_content).expect("write");
+
+        let resolved = ResolvedThread {
+            provider: ProviderKind::Claude,
+            session_id: "main-session".to_string(),
+            path: main_path,
+            metadata: ResolutionMeta::default(),
+        };
+
+        let agents = list_subagents(&resolved);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].agent_id, "abc");
+        assert_eq!(agents[0].provider, ProviderKind::Claude);
+        assert_eq!(agents[0].status, "completed"); // has assistant response
+    }
+
+    #[test]
+    fn list_subagents_unsupported_provider_returns_empty() {
+        use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
+        use crate::service::list_subagents;
+
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("thread.jsonl");
+        fs::write(&path, "{\"type\":\"user\"}\n").expect("write");
+
+        let resolved = ResolvedThread {
+            provider: ProviderKind::Amp,
+            session_id: "test".to_string(),
+            path,
+            metadata: ResolutionMeta::default(),
+        };
+
+        let agents = list_subagents(&resolved);
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn resolve_thread_json_returns_messages_and_tool_calls() {
+        use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
+        use crate::service::resolve_thread_json;
+        use crate::uri::ThreadUri;
+
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("thread.jsonl");
+        let raw = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"cmd":"ls"}},{"type":"text","text":"done"}]}}"#;
+        fs::write(&path, raw).expect("write");
+
+        let uri =
+            ThreadUri::parse("claude://2823d1df-720a-4c31-ac55-ae8ba726721f").expect("parse uri");
+        let resolved = ResolvedThread {
+            provider: ProviderKind::Claude,
+            session_id: "2823d1df-720a-4c31-ac55-ae8ba726721f".to_string(),
+            path,
+            metadata: ResolutionMeta::default(),
+        };
+
+        let json = resolve_thread_json(&uri, &resolved).expect("json");
+        assert_eq!(json["message_count"], 2);
+        assert_eq!(json["tool_call_count"], 1);
+        assert_eq!(json["messages"][0]["role"], "user");
+        assert_eq!(json["messages"][0]["text"], "hello");
+        assert_eq!(json["tool_calls"][0]["name"], "Bash");
+        assert_eq!(json["provider"], "claude");
     }
 }

@@ -4,10 +4,10 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::error::{Result, XurlError};
-use crate::model::{MessageRole, ProviderKind, ThreadMessage};
+use crate::model::{MessageRole, ProviderKind, ThreadMessage, ToolCall};
 use crate::uri::ThreadUri;
 
-const TOOL_TYPES: &[&str] = &[
+pub const TOOL_TYPES: &[&str] = &[
     "tool_call",
     "tool_result",
     "tool_use",
@@ -90,6 +90,206 @@ pub fn extract_messages(
             })
             .collect(),
     )
+}
+
+/// Extract tool call invocations from raw JSONL/JSON content.
+///
+/// Handles per-provider formats:
+/// - **Claude**: `message.content[].type ∈ TOOL_TYPES`
+/// - **Codex**: `payload.type ∈ TOOL_TYPES`
+/// - **Amp/Gemini**: single JSON → `messages[].content[].type ∈ TOOL_TYPES`
+/// - **Pi**: JSONL → `message.content[].type ∈ TOOL_TYPES`
+/// - **Opencode**: JSONL → `parts[].type == "tool"`
+pub fn extract_tool_calls(
+    provider: ProviderKind,
+    path: &Path,
+    raw_jsonl: &str,
+) -> Result<Vec<ToolCall>> {
+    if provider == ProviderKind::Amp || provider == ProviderKind::Gemini {
+        return extract_tool_calls_single_json(path, raw_jsonl);
+    }
+
+    let mut calls = Vec::new();
+
+    for (line_idx, line) in raw_jsonl.lines().enumerate() {
+        let line_no = line_idx + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let value = serde_json::from_str::<Value>(trimmed).map_err(|source| {
+            XurlError::InvalidJsonLine {
+                path: path.to_path_buf(),
+                line: line_no,
+                source,
+            }
+        })?;
+
+        match provider {
+            ProviderKind::Claude | ProviderKind::Pi => {
+                extract_tool_calls_from_content_array(&value, "message", &mut calls);
+            }
+            ProviderKind::Codex => {
+                extract_tool_calls_from_payload(&value, &mut calls);
+            }
+            ProviderKind::Opencode => {
+                extract_tool_calls_from_opencode(&value, &mut calls);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(calls)
+}
+
+/// Extract tool calls from a single-JSON provider (Amp, Gemini).
+fn extract_tool_calls_single_json(path: &Path, raw_json: &str) -> Result<Vec<ToolCall>> {
+    let value =
+        serde_json::from_str::<Value>(raw_json).map_err(|source| XurlError::InvalidJsonLine {
+            path: path.to_path_buf(),
+            line: 1,
+            source,
+        })?;
+
+    let mut calls = Vec::new();
+    for message in value
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(content) = message.get("content").and_then(Value::as_array) {
+            for item in content {
+                if let Some(call_type) = item.get("type").and_then(Value::as_str) {
+                    if TOOL_TYPES.contains(&call_type) {
+                        let name = item
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let args = item
+                            .get("input")
+                            .or_else(|| item.get("arguments"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        calls.push(ToolCall {
+                            name,
+                            args,
+                            call_type: call_type.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(calls)
+}
+
+/// Extract from `message.content[]` or `content[]` arrays (Claude/Pi/generic).
+fn extract_tool_calls_from_content_array(
+    value: &Value,
+    wrapper_key: &str,
+    out: &mut Vec<ToolCall>,
+) {
+    let content = value
+        .get(wrapper_key)
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
+        .or_else(|| value.get("content").and_then(Value::as_array));
+
+    let Some(items) = content else {
+        return;
+    };
+
+    for item in items {
+        if let Some(call_type) = item.get("type").and_then(Value::as_str) {
+            if TOOL_TYPES.contains(&call_type) {
+                let name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
+                let args = item
+                    .get("input")
+                    .or_else(|| item.get("arguments"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                out.push(ToolCall {
+                    name,
+                    args,
+                    call_type: call_type.to_string(),
+                });
+            }
+        }
+    }
+}
+
+/// Extract from Codex `payload.type` format.
+fn extract_tool_calls_from_payload(value: &Value, out: &mut Vec<ToolCall>) {
+    let Some(payload) = value.get("payload") else {
+        return;
+    };
+    let Some(call_type) = payload.get("type").and_then(Value::as_str) else {
+        return;
+    };
+    if !TOOL_TYPES.contains(&call_type) {
+        return;
+    }
+
+    let name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+
+    let args = payload
+        .get("arguments")
+        .and_then(|v| {
+            if let Some(s) = v.as_str() {
+                serde_json::from_str::<Value>(s).ok()
+            } else {
+                Some(v.clone())
+            }
+        })
+        .or_else(|| payload.get("input").cloned())
+        .unwrap_or(Value::Null);
+
+    out.push(ToolCall {
+        name,
+        args,
+        call_type: call_type.to_string(),
+    });
+}
+
+/// Extract from Opencode `parts[].type == "tool"` format.
+fn extract_tool_calls_from_opencode(value: &Value, out: &mut Vec<ToolCall>) {
+    let Some(parts) = value.get("parts").and_then(Value::as_array) else {
+        return;
+    };
+
+    for part in parts {
+        let Some(part_type) = part.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        if part_type != "tool" {
+            continue;
+        }
+
+        let name = part
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let args = part.get("input").cloned().unwrap_or(Value::Null);
+
+        out.push(ToolCall {
+            name,
+            args,
+            call_type: "tool".to_string(),
+        });
+    }
 }
 
 fn extract_timeline_entries(
@@ -767,5 +967,63 @@ mod tests {
         assert!(output.contains("Summary: old conversation"));
         assert!(!output.contains("## 1. User"));
         assert!(output.contains("## 2. Assistant"));
+    }
+
+    #[test]
+    fn claude_extract_tool_calls() {
+        use crate::render::extract_tool_calls;
+
+        let raw = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}},{"type":"text","text":"done"}]}}"#;
+
+        let calls =
+            extract_tool_calls(ProviderKind::Claude, Path::new("/tmp/mock"), raw).expect("extract");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "Bash");
+        assert_eq!(calls[0].call_type, "tool_use");
+        assert_eq!(calls[0].args["command"], "ls");
+    }
+
+    #[test]
+    fn codex_extract_tool_calls() {
+        use crate::render::extract_tool_calls;
+
+        let raw = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"ls\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}}"#;
+
+        let calls =
+            extract_tool_calls(ProviderKind::Codex, Path::new("/tmp/mock"), raw).expect("extract");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].call_type, "function_call");
+        assert_eq!(calls[0].args["cmd"], "ls");
+    }
+
+    #[test]
+    fn amp_extract_tool_calls() {
+        use crate::render::extract_tool_calls;
+
+        let raw = r#"{"id":"T-1","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]},{"role":"assistant","content":[{"type":"tool_use","name":"finder","input":{"q":"test"}},{"type":"text","text":"done"}]}]}"#;
+
+        let calls =
+            extract_tool_calls(ProviderKind::Amp, Path::new("/tmp/mock"), raw).expect("extract");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "finder");
+        assert_eq!(calls[0].call_type, "tool_use");
+    }
+
+    #[test]
+    fn opencode_extract_tool_calls() {
+        use crate::render::extract_tool_calls;
+
+        let raw = r#"{"type":"session","sessionId":"ses_1"}
+{"type":"message","id":"msg_1","sessionId":"ses_1","message":{"role":"assistant","time":{"created":1}},"parts":[{"type":"tool","tool":"read","input":{"path":"main.rs"}},{"type":"text","text":"done"}]}"#;
+
+        let calls = extract_tool_calls(ProviderKind::Opencode, Path::new("/tmp/mock"), raw)
+            .expect("extract");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read");
+        assert_eq!(calls[0].call_type, "tool");
     }
 }
