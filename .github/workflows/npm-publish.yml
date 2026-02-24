@@ -1,109 +1,69 @@
 name: Publish npm Package
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows:
+      - Publish Release Assets
+    types:
+      - completed
 
 jobs:
-  validate-tag:
-    name: Validate release tag
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Ensure tag version matches Cargo version
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          cargo_version="$(awk -F '\"' '$1 ~ /^version = / { print $2; exit }' xurl-cli/Cargo.toml)"
-
-          if [[ -z "${cargo_version}" ]]; then
-            echo "Failed to read version from xurl-cli/Cargo.toml"
-            exit 1
-          fi
-
-          if [[ "${tag}" != "${cargo_version}" ]]; then
-            echo "Tag version (${tag}) does not match Cargo version (${cargo_version})."
-            exit 1
-          fi
-
-  build-native:
-    name: Build native binary for ${{ matrix.platform.target }}
-    needs: validate-tag
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            binary: xurl
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            binary: xurl
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            binary: xurl
-          - os: macos-14
-            target: aarch64-apple-darwin
-            binary: xurl
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary: xurl.exe
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            binary: xurl.exe
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release binary
-        shell: bash
-        run: cargo build --locked --release -p xurl-cli --target ${{ matrix.platform.target }}
-
-      - name: Prepare vendor payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "dist/vendor/${{ matrix.platform.target }}/xurl"
-          cp "target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary }}" \
-             "dist/vendor/${{ matrix.platform.target }}/xurl/${{ matrix.platform.binary }}"
-
-      - name: Upload vendor artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vendor-${{ matrix.platform.target }}
-          path: dist/vendor/${{ matrix.platform.target }}
-          if-no-files-found: error
-
   stage-npm:
     name: Stage npm tarballs
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    needs: build-native
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      version: ${{ steps.read-manifest.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      - name: Download release metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: dist/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read release version
+        id: read-manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path("dist/release/manifest.json").read_text(encoding="utf-8"))
+          print(manifest["version"])
+          PY
+          )"
+
+          if [[ -z "${version}" ]]; then
+            echo "Failed to read version from dist/release/manifest.json"
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Download vendor artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/vendor-artifacts
           pattern: vendor-*
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Assemble vendor tree
         shell: bash
@@ -129,7 +89,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.read-manifest.outputs.version }}"
           python3 scripts/stage_npm_packages.py \
             --release-version "${version}" \
             --vendor-src dist/vendor \
@@ -145,6 +105,7 @@ jobs:
 
   publish-npm:
     name: Publish to npm
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     needs: stage-npm
     environment:
@@ -173,10 +134,10 @@ jobs:
       - name: Publish npm tarballs
         shell: bash
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ needs.stage-npm.outputs.version }}
         run: |
           set -euo pipefail
-          version="${VERSION#v}"
+          version="${VERSION}"
 
           npm_tag=""
           tag_prefix=""
@@ -214,7 +175,7 @@ jobs:
           }
 
           shopt -s nullglob
-          platform_tarballs=(dist/npm/xurl-npm-linux-*-"${version}".tgz dist/npm/xurl-npm-darwin-*-"${version}".tgz dist/npm/xurl-npm-win32-*-"${version}".tgz)
+          platform_tarballs=(dist/npm/xurl-npm-linux-*-${version}.tgz dist/npm/xurl-npm-darwin-*-${version}.tgz dist/npm/xurl-npm-win32-*-${version}.tgz)
           for tarball in "${platform_tarballs[@]}"; do
             filename="$(basename "${tarball}")"
             platform="${filename#xurl-npm-}"

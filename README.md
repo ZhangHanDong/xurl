@@ -21,6 +21,29 @@
 - Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
 - Automatically respects official environment variables and default local data roots for each supported agent.
 
+## Install
+
+Homebrew:
+
+```bash
+brew tap xuanwo/tap
+brew install xurl
+```
+
+PyPI via `uv`:
+
+```bash
+uv tool install xuanwo-xurl
+xurl --version
+```
+
+npm:
+
+```bash
+npm install -g @xuanwo/xurl
+xurl --version
+```
+
 ## Quick Start
 
 1. Add `xurl` as an agent skill:
@@ -151,3 +174,9 @@ xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
 xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 ```
+
+## Release Automation
+
+- `release.yml` (tag push `v*`) builds native binaries and publishes GitHub release assets (`xurl-<version>-<target>.tar.gz` + checksums + manifest).
+- `homebrew-publish.yml` consumes `release.yml` metadata and updates `xuanwo/tap` formula.
+- `npm-publish.yml` and `pypi-publish.yml` keep their original filenames for trusted publisher compatibility, but now consume artifacts from `release.yml` instead of rebuilding binaries.

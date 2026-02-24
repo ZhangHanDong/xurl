@@ -11,6 +11,23 @@ Use this skill when you need to read AI agent thread content by URI.
 
 Pick up the preferred ways based on current context:
 
+### Homebrew
+
+Install via Homebrew tap:
+
+```bash
+brew tap xuanwo/tap
+brew install xurl
+xurl --version
+```
+
+Upgrade via Homebrew:
+
+```bash
+brew update
+brew upgrade xurl
+```
+
 ### Python Env
 
 install from PyPI via `uv`:
@@ -48,6 +65,8 @@ Upgrade `xurl` installed by npm:
 npm update -g @xuanwo/xurl
 xurl --version
 ```
+
+Release binaries are published by `release.yml`; `homebrew-publish.yml` updates tap formula, and npm/PyPI workflows keep their filenames but consume release artifacts instead of rebuilding binaries.
 
 ## When to Use
 
