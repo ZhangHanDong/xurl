@@ -80,7 +80,117 @@ fn read_thread_raw(path: &Path) -> Result<String> {
 
 pub fn render_thread_markdown(uri: &ThreadUri, resolved: &ResolvedThread) -> Result<String> {
     let raw = read_thread_raw(&resolved.path)?;
-    render::render_markdown(uri, &resolved.path, &raw)
+    let markdown = render::render_markdown(uri, &resolved.path, &raw)?;
+    Ok(strip_frontmatter(markdown))
+}
+
+pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Result<String> {
+    let mut output = String::new();
+    output.push_str("---\n");
+    push_yaml_string(&mut output, "uri", &uri.as_agents_string());
+    push_yaml_string(&mut output, "provider", &uri.provider.to_string());
+    push_yaml_string(&mut output, "session_id", &uri.session_id);
+
+    match (uri.provider, uri.agent_id.as_deref()) {
+        (ProviderKind::Codex | ProviderKind::Claude, None) => {
+            let resolved_main = resolve_thread(uri, roots)?;
+            push_yaml_string(
+                &mut output,
+                "thread_source",
+                &resolved_main.path.display().to_string(),
+            );
+            push_yaml_string(&mut output, "mode", "subagent_index");
+
+            let view = resolve_subagent_view(uri, roots, true)?;
+            let mut warnings = resolved_main.metadata.warnings.clone();
+
+            if let SubagentView::List(list) = view {
+                render_subagents_head(&mut output, &list);
+                warnings.extend(list.warnings);
+            }
+
+            render_warnings(&mut output, &warnings);
+        }
+        (ProviderKind::Pi, None) => {
+            let resolved = resolve_thread(uri, roots)?;
+            push_yaml_string(
+                &mut output,
+                "thread_source",
+                &resolved.path.display().to_string(),
+            );
+            push_yaml_string(&mut output, "mode", "pi_entry_index");
+
+            let list = resolve_pi_entry_list_view(uri, roots)?;
+            render_pi_entries_head(&mut output, &list);
+            render_warnings(&mut output, &list.warnings);
+        }
+        (ProviderKind::Codex | ProviderKind::Claude, Some(_)) => {
+            let main_uri = main_thread_uri(uri);
+            let resolved_main = resolve_thread(&main_uri, roots)?;
+
+            let view = resolve_subagent_view(uri, roots, false)?;
+            if let SubagentView::Detail(detail) = view {
+                let thread_source = detail
+                    .child_thread
+                    .as_ref()
+                    .and_then(|thread| thread.path.as_deref())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| resolved_main.path.display().to_string());
+                push_yaml_string(&mut output, "thread_source", &thread_source);
+                push_yaml_string(&mut output, "mode", "subagent_detail");
+
+                if let Some(agent_id) = &detail.query.agent_id {
+                    push_yaml_string(&mut output, "agent_id", agent_id);
+                    push_yaml_string(
+                        &mut output,
+                        "subagent_uri",
+                        &agents_thread_uri(
+                            &detail.query.provider,
+                            &detail.query.main_thread_id,
+                            Some(agent_id),
+                        ),
+                    );
+                }
+                push_yaml_string(&mut output, "status", &detail.status);
+                push_yaml_string(&mut output, "status_source", &detail.status_source);
+
+                if let Some(child_thread) = &detail.child_thread {
+                    push_yaml_string(&mut output, "child_thread_id", &child_thread.thread_id);
+                    if let Some(path) = &child_thread.path {
+                        push_yaml_string(&mut output, "child_thread_source", path);
+                    }
+                    if let Some(last_updated_at) = &child_thread.last_updated_at {
+                        push_yaml_string(&mut output, "child_last_updated_at", last_updated_at);
+                    }
+                }
+
+                render_warnings(&mut output, &detail.warnings);
+            }
+        }
+        (ProviderKind::Pi, Some(entry_id)) => {
+            let resolved = resolve_thread(uri, roots)?;
+            push_yaml_string(
+                &mut output,
+                "thread_source",
+                &resolved.path.display().to_string(),
+            );
+            push_yaml_string(&mut output, "mode", "pi_entry");
+            push_yaml_string(&mut output, "entry_id", entry_id);
+        }
+        _ => {
+            let resolved = resolve_thread(uri, roots)?;
+            push_yaml_string(
+                &mut output,
+                "thread_source",
+                &resolved.path.display().to_string(),
+            );
+            push_yaml_string(&mut output, "mode", "thread");
+            render_warnings(&mut output, &resolved.metadata.warnings);
+        }
+    }
+
+    output.push_str("---\n");
+    Ok(output)
 }
 
 pub fn resolve_subagent_view(
@@ -90,7 +200,7 @@ pub fn resolve_subagent_view(
 ) -> Result<SubagentView> {
     if list && uri.agent_id.is_some() {
         return Err(XurlError::InvalidMode(
-            "--list cannot be used with child thread URIs like agents://<provider>/<main_thread_id>/<agent_id>".to_string(),
+            "subagent index mode requires agents://<provider>/<main_thread_id>".to_string(),
         ));
     }
 
@@ -108,6 +218,117 @@ pub fn resolve_subagent_view(
             uri.provider.to_string(),
         )),
     }
+}
+
+fn push_yaml_string(output: &mut String, key: &str, value: &str) {
+    output.push_str(&format!("{key}: '{}'\n", yaml_single_quoted(value)));
+}
+
+fn yaml_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn render_warnings(output: &mut String, warnings: &[String]) {
+    let mut unique = BTreeSet::<String>::new();
+    unique.extend(warnings.iter().cloned());
+
+    if unique.is_empty() {
+        return;
+    }
+
+    output.push_str("warnings:\n");
+    for warning in unique {
+        output.push_str(&format!("  - '{}'\n", yaml_single_quoted(&warning)));
+    }
+}
+
+fn render_subagents_head(output: &mut String, list: &SubagentListView) {
+    output.push_str("subagents:\n");
+    if list.agents.is_empty() {
+        output.push_str("  []\n");
+        return;
+    }
+
+    for agent in &list.agents {
+        output.push_str(&format!(
+            "  - agent_id: '{}'\n",
+            yaml_single_quoted(&agent.agent_id)
+        ));
+        output.push_str(&format!(
+            "    uri: '{}'\n",
+            yaml_single_quoted(&agents_thread_uri(
+                &list.query.provider,
+                &list.query.main_thread_id,
+                Some(&agent.agent_id),
+            ))
+        ));
+        push_yaml_string_with_indent(output, 4, "status", &agent.status);
+        push_yaml_string_with_indent(output, 4, "status_source", &agent.status_source);
+        if let Some(last_update) = &agent.last_update {
+            push_yaml_string_with_indent(output, 4, "last_update", last_update);
+        }
+        if let Some(child_thread) = &agent.child_thread
+            && let Some(path) = &child_thread.path
+        {
+            push_yaml_string_with_indent(output, 4, "thread_source", path);
+        }
+    }
+}
+
+fn render_pi_entries_head(output: &mut String, list: &PiEntryListView) {
+    output.push_str("entries:\n");
+    if list.entries.is_empty() {
+        output.push_str("  []\n");
+        return;
+    }
+
+    for entry in &list.entries {
+        output.push_str(&format!(
+            "  - entry_id: '{}'\n",
+            yaml_single_quoted(&entry.entry_id)
+        ));
+        output.push_str(&format!(
+            "    uri: '{}'\n",
+            yaml_single_quoted(&agents_thread_uri(
+                &list.query.provider,
+                &list.query.session_id,
+                Some(&entry.entry_id),
+            ))
+        ));
+        push_yaml_string_with_indent(output, 4, "entry_type", &entry.entry_type);
+        if let Some(parent_id) = &entry.parent_id {
+            push_yaml_string_with_indent(output, 4, "parent_id", parent_id);
+        }
+        if let Some(timestamp) = &entry.timestamp {
+            push_yaml_string_with_indent(output, 4, "timestamp", timestamp);
+        }
+        if let Some(preview) = &entry.preview {
+            push_yaml_string_with_indent(output, 4, "preview", preview);
+        }
+        push_yaml_bool_with_indent(output, 4, "is_leaf", entry.is_leaf);
+    }
+}
+
+fn push_yaml_string_with_indent(output: &mut String, indent: usize, key: &str, value: &str) {
+    output.push_str(&format!(
+        "{}{key}: '{}'\n",
+        " ".repeat(indent),
+        yaml_single_quoted(value)
+    ));
+}
+
+fn push_yaml_bool_with_indent(output: &mut String, indent: usize, key: &str, value: bool) {
+    output.push_str(&format!("{}{key}: {value}\n", " ".repeat(indent)));
+}
+
+fn strip_frontmatter(markdown: String) -> String {
+    let Some(rest) = markdown.strip_prefix("---\n") else {
+        return markdown;
+    };
+    let Some((_, body)) = rest.split_once("\n---\n\n") else {
+        return markdown;
+    };
+    body.to_string()
 }
 
 pub fn render_subagent_view_markdown(view: &SubagentView) -> String {
@@ -128,7 +349,7 @@ pub fn resolve_pi_entry_list_view(
     }
     if uri.agent_id.is_some() {
         return Err(XurlError::InvalidMode(
-            "--list cannot be used with agents://pi/<session_id>/<entry_id>".to_string(),
+            "pi entry index mode requires agents://pi/<session_id>".to_string(),
         ));
     }
 

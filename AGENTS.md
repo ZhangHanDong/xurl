@@ -1,11 +1,11 @@
 # Agent Guidelines
 
 ## Workspace Responsibilities
-- `xurl-core`: all URI parsing, provider resolution, raw file reading, and markdown rendering lives here. It owns provider-specific parsers for Codex, Claude, and OpenCode plus the shared service layer (`resolve_thread`, `read_thread_raw`, `render_thread_markdown`).
+- `xurl-core`: all URI parsing, provider resolution, raw file reading, and markdown rendering lives here. It owns provider-specific parsers for Codex, Claude, and OpenCode plus the shared service layer (`resolve_thread`, `render_thread_markdown`, `render_thread_head_markdown`).
 - `xurl-cli`: thin CLI that parses `xurl <uri>` arguments with `clap`, wires up `ProviderRoots::from_env_or_home`, emits metadata warnings to `stderr`, and prints rendered markdown (`render_thread_markdown`).
 
 ## CLI Parameter & Provider Behavior Matrix
-- The CLI accepts a single `<uri>` (`codex://<id>`, `codex://threads/<id>`, `claude://<id>`, or `opencode://<id>`) and an optional `--list` flag for supported aggregate views.
+- The CLI accepts a single `<uri>` (`codex://<id>`, `codex://threads/<id>`, `claude://<id>`, or `opencode://<id>`) and an optional `-I/--head` flag for frontmatter-only output.
 - `ProviderRoots::from_env_or_home` sources the base directories using:
   - Codex: `CODEX_HOME` then `~/.codex`
   - Claude: `CLAUDE_CONFIG_DIR` then `~/.claude`

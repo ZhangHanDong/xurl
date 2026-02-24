@@ -12,10 +12,11 @@
   - <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude
   - <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini
   - <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi
-  - <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
+- <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
 - Unified URI scheme: `agents://<provider>/<thread_path>` is the primary format.
-- Default output is timeline markdown with YAML frontmatter (`uri`, `thread_source`) plus user/assistant messages and compact markers.
-- `--list` outputs subagent status aggregation for providers that support subagent transcripts.
+- Default output is markdown with YAML frontmatter header plus provider-specific body.
+- `-I, --head` outputs frontmatter only.
+- For Codex/Claude/Pi main URIs, head output includes discovery fields (`subagents` / `entries`) that replace list-mode aggregation.
 - Subagent markdown views print full parent/subagent URIs in `agents://...` format.
 - Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
 - Automatically respects official environment variables and default local data roots for each supported agent.
@@ -81,7 +82,7 @@ xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
   - `agents://codex/threads/<session_id>`
   - `agents://codex/<main_session_id>/<agent_id>`
 - Subagent modes:
-  - Aggregate: `xurl agents://codex/<main_session_id> --list`
+  - Aggregate header only: `xurl -I agents://codex/<main_session_id>`
   - Drill-down: `xurl agents://codex/<main_session_id>/<agent_id>`
 - Resolution order:
   - SQLite thread index under `CODEX_HOME` (`state_<version>.sqlite` first, then `state.sqlite`) via `threads(id, rollout_path, archived)`.
@@ -91,7 +92,7 @@ xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl agents://codex/threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
-xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 --list
+xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
@@ -101,13 +102,13 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1
   - `agents://claude/<session_id>`
   - `agents://claude/<main_session_id>/<agent_id>`
 - Subagent modes:
-  - Aggregate: `xurl agents://claude/<main_session_id> --list`
+  - Aggregate header only: `xurl -I agents://claude/<main_session_id>`
   - Drill-down: `xurl agents://claude/<main_session_id>/<agent_id>`
 - Example:
 
 ```bash
 xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
-xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f --list
+xurl -I agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
 xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
 ```
 
@@ -149,11 +150,11 @@ xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
 - Rendering:
   - `agents://pi/<session_id>` renders the latest leaf branch in the session tree.
   - `agents://pi/<session_id>/<entry_id>` renders the branch ending at the specified entry id.
-  - `agents://pi/<session_id> --list` lists all entries and marks leaf entries that are good drill-down targets.
+  - `xurl -I agents://pi/<session_id>` outputs `entries` in frontmatter for drill-down discovery.
 - Example:
 
 ```bash
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
-xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f --list
+xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 ```

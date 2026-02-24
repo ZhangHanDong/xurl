@@ -304,6 +304,40 @@ fn raw_flag_is_rejected() {
 }
 
 #[test]
+fn head_flag_outputs_frontmatter_only() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_uri())
+        .arg("-I")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("---\n"))
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains("# Thread").not());
+}
+
+#[test]
+fn codex_subagent_head_outputs_header_only() {
+    let temp = setup_codex_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_subagent_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_detail'"))
+        .stdout(predicate::str::contains(format!("agent_id: '{SUBAGENT_ID}'")))
+        .stdout(predicate::str::contains("status:"))
+        .stdout(predicate::str::contains("# Subagent Thread").not());
+}
+
+#[test]
 fn codex_deeplink_outputs_markdown() {
     let temp = setup_codex_tree();
 
@@ -396,33 +430,29 @@ fn codex_subagent_outputs_no_warning_text_for_markdown() {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", temp.path())
         .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
-        .arg(codex_uri())
-        .arg("--list")
+        .arg(codex_subagent_uri())
         .assert()
         .success()
-        .stdout(predicate::str::contains("## Warnings").not())
         .stderr(predicate::str::contains("warning:").not());
 }
 
 #[test]
-fn codex_real_fixture_subagent_list_outputs_markdown() {
+fn codex_real_fixture_head_includes_subagents() {
     let fixture_root = codex_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
-    let main_uri = agents_uri("codex", REAL_FIXTURE_MAIN_ID);
     let subagent_uri = agents_child_uri("codex", REAL_FIXTURE_MAIN_ID, REAL_FIXTURE_AGENT_ID);
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", fixture_root)
         .env("CLAUDE_CONFIG_DIR", "/tmp/missing-claude")
         .arg(format!("codex://{REAL_FIXTURE_MAIN_ID}"))
-        .arg("--list")
+        .arg("--head")
         .assert()
         .success()
-        .stdout(predicate::str::contains("# Subagent Status"))
-        .stdout(predicate::str::contains(format!(
-            "- Main Thread: `{main_uri}`"
-        )))
-        .stdout(predicate::str::contains(subagent_uri));
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(subagent_uri))
+        .stdout(predicate::str::contains("# Subagent Status").not());
 }
 
 #[test]
@@ -443,7 +473,7 @@ fn codex_real_fixture_subagent_detail_outputs_markdown() {
 }
 
 #[test]
-fn list_mode_rejects_subagent_uri() {
+fn list_flag_is_rejected() {
     let temp = setup_codex_subagent_tree();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
@@ -453,7 +483,7 @@ fn list_mode_rejects_subagent_uri() {
         .arg("--list")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("invalid mode"));
+        .stderr(predicate::str::contains("unexpected argument '--list'"));
 }
 
 #[test]
@@ -512,9 +542,9 @@ fn pi_outputs_markdown_from_latest_leaf() {
         .assert()
         .success()
         .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## Timeline"))
         .stdout(predicate::str::contains("root"))
-        .stdout(predicate::str::contains("branch two done"))
-        .stdout(predicate::str::contains("branch one done").not());
+        .stdout(predicate::str::contains("branch two done"));
 }
 
 #[test]
@@ -532,36 +562,38 @@ fn pi_entry_outputs_markdown_from_requested_leaf() {
 }
 
 #[test]
-fn pi_list_outputs_markdown() {
+fn pi_head_outputs_entries() {
     let temp = setup_pi_tree();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
         .arg(pi_uri())
-        .arg("--list")
+        .arg("--head")
         .assert()
         .success()
-        .stdout(predicate::str::contains("# Pi Session Entries"))
+        .stdout(predicate::str::contains("mode: 'pi_entry_index'"))
+        .stdout(predicate::str::contains("entries:"))
         .stdout(predicate::str::contains(format!(
-            "agents://pi/{PI_SESSION_ID}/a1b2c3d4"
+            "uri: 'agents://pi/{PI_SESSION_ID}/a1b2c3d4'"
         )))
-        .stdout(predicate::str::contains("- Leaf: `yes`"));
+        .stdout(predicate::str::contains("is_leaf: true"));
 }
 
 #[test]
-fn pi_list_rejects_entry_uri() {
+fn pi_head_entry_outputs_header_only() {
     let temp = setup_pi_tree();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
         .arg(pi_entry_uri())
-        .arg("--list")
+        .arg("--head")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid mode"))
-        .stderr(predicate::str::contains(
-            "agents://pi/<session_id>/<entry_id>",
-        ));
+        .success()
+        .stdout(predicate::str::contains("mode: 'pi_entry'"))
+        .stdout(predicate::str::contains(format!(
+            "entry_id: '{PI_ENTRY_ID}'"
+        )))
+        .stdout(predicate::str::contains("# Thread").not());
 }
 
 #[test]
@@ -602,24 +634,22 @@ fn claude_subagent_outputs_markdown_view() {
 }
 
 #[test]
-fn claude_real_fixture_subagent_list_outputs_markdown() {
+fn claude_real_fixture_head_includes_subagents() {
     let fixture_root = claude_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
-    let main_uri = agents_uri("claude", CLAUDE_REAL_MAIN_ID);
     let subagent_uri = agents_child_uri("claude", CLAUDE_REAL_MAIN_ID, CLAUDE_REAL_AGENT_ID);
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CLAUDE_CONFIG_DIR", fixture_root)
         .env("CODEX_HOME", "/tmp/missing-codex")
         .arg(claude_real_uri())
-        .arg("--list")
+        .arg("--head")
         .assert()
         .success()
-        .stdout(predicate::str::contains("# Subagent Status"))
-        .stdout(predicate::str::contains(format!(
-            "- Main Thread: `{main_uri}`"
-        )))
-        .stdout(predicate::str::contains(subagent_uri));
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(subagent_uri))
+        .stdout(predicate::str::contains("# Subagent Status").not());
 }
 
 #[test]

@@ -14,8 +14,8 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 
 - Keep backward compatibility for existing provider URIs.
 - Use one URI shape across providers for subagent drill-down.
-- Support both aggregate status and single-agent drill-down.
-- Use one explicit CLI mode switch for aggregate listing.
+- Support both aggregate metadata discovery and single-agent drill-down.
+- Use one explicit CLI mode switch (`-I/--head`) for metadata-only output.
 - Make markdown metadata stable for automation consumers.
 
 ## Non-Goals
@@ -40,10 +40,10 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 
 ## CLI Mode Model
 
-### Aggregate Listing
+### Aggregate Metadata
 
-- Aggregate subagents under a parent thread is triggered by `--list`:
-  - `xurl '<provider>://<main_thread_id>' --list`
+- Aggregate subagents/entries under a parent thread is triggered by `--head`:
+  - `xurl -I '<provider>://<main_thread_id>'`
 
 ### Single-Agent Drill-Down
 
@@ -52,9 +52,8 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 
 ### Mode Constraints
 
-- `--list` requires a parent-thread URI (`<provider>://<main_thread_id>`).
-- `--list` is invalid with drill-down URI (`<provider>://<main_thread_id>/<agent_id>`).
-- `--list` always renders markdown output.
+- `--head` can be used with both parent and drill-down URIs.
+- `--head` always renders frontmatter-only markdown output.
 
 ## Provider Mapping
 
@@ -74,13 +73,13 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 
 ## Resolution Flow
 
-### Aggregate: `<provider>://<main> --list`
+### Aggregate: `-I <provider>://<main>`
 
 1. Resolve and load parent thread.
 2. Discover child/subagent records for that provider.
 3. Validate parent-child linkage.
 4. Build per-agent status summary.
-5. Render aggregate markdown.
+5. Render frontmatter only, including discovery lists (`subagents` / `entries`) when available.
 
 ### Drill-Down: `<provider>://<main>/<agent>`
 
@@ -88,7 +87,7 @@ The existing URI behavior is inconsistent with subagent use cases because it onl
 2. Locate target agent/thread using provider mapping rules.
 3. Validate linkage between parent and agent.
 4. Build lifecycle summary from parent and excerpt from agent transcript.
-5. Render combined markdown view.
+5. Render combined markdown view (default mode) or frontmatter only (`--head`).
 
 ## Status Normalization
 
@@ -124,6 +123,11 @@ Single-thread timeline output includes YAML frontmatter fields for machine use:
 
 - `uri`
 - `thread_source`
+- `provider`
+- `session_id`
+- `mode`
+- `subagents` (Codex/Claude parent thread in head mode)
+- `entries` (Pi parent thread in head mode)
 
 ## Compatibility Rules
 
@@ -145,9 +149,9 @@ Single-thread timeline output includes YAML frontmatter fields for machine use:
   - `<provider>://<main>/<agent>`
   - malformed path rejection
 - CLI argument tests:
-  - `<provider>://<main> --list`
-  - `<provider>://<main>/<agent>` without `--list`
-  - invalid `--list` with `<provider>://<main>/<agent>`
+  - `-I <provider>://<main>`
+  - `-I <provider>://<main>/<agent>`
+  - invalid `--list` (unsupported flag)
 - Provider tests:
   - Codex parent-child validation and lifecycle extraction
   - Claude file discovery in both known layouts

@@ -12,7 +12,7 @@ pub use model::{
 };
 pub use provider::ProviderRoots;
 pub use service::{
-    render_pi_entry_list_markdown, render_subagent_view_markdown, render_thread_markdown,
-    resolve_pi_entry_list_view, resolve_subagent_view, resolve_thread,
+    render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
+    resolve_subagent_view, resolve_thread,
 };
 pub use uri::ThreadUri;

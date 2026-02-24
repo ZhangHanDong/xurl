@@ -34,7 +34,7 @@ xurl --version
 
 1. Identify provider and id source.
 - Provider usually comes from context (`codex`, `claude`, `amp`, `gemini`, `pi`, `opencode`).
-- Prefer ids copied from existing links, list output, or known session metadata.
+- Prefer ids copied from existing links, head output, or known session metadata.
 
 2. Build the canonical URI.
 - Main thread:
@@ -50,12 +50,12 @@ xurl --version
   - `agents://pi/<session_id>/<entry_id>`
 
 3. Validate mode constraints.
-- `--list` must be used with a main thread URI, not with a child URI.
+- `--head` can be used with both main and child URIs.
 - `amp`, `gemini`, and `opencode` do not support child path segments.
 
 4. If child id is unknown, discover first.
-- Use `xurl <main_uri> --list` to get valid child targets (Codex/Claude subagents, Pi entries).
-- Copy URI/id from the list output instead of guessing.
+- Use `xurl -I <main_uri>` to get valid child targets (Codex/Claude `subagents`, Pi `entries`).
+- Copy URI/id from the frontmatter output instead of guessing.
 
 ## Supported URI Forms
 
@@ -97,7 +97,7 @@ Legacy compatibility:
   - input: `agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f` + `acompact-69d537`
   - uri: `agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537`
 - Pi branch drill-down:
-  - input: `agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f --list` output entry `d1b2c3d4`
+  - input: `xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f` output entry `d1b2c3d4`
   - uri: `agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4`
 
 ## Commands
@@ -118,12 +118,12 @@ Frontmatter includes machine-readable source metadata:
 # ---
 ```
 
-Discover child targets first:
+Discover child targets first (head-only output):
 
 ```bash
-xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 --list
-xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f --list
-xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f --list
+xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+xurl -I agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
+xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 ```
 
 Codex subagent drill-down:
@@ -172,7 +172,7 @@ xurl agents://codex/threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
 Delegate follow-up (discover child first, then drill down):
 
 ```bash
-xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 --list
+xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
@@ -181,8 +181,8 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1
 - Prefer canonical `agents://` URIs when constructing links or commands.
 - Legacy provider schemes are accepted, so keep workflows compatible with existing links.
 - Use default markdown output and read frontmatter (`thread_source`) when raw file access is needed.
-- If the user asks for subagent aggregation, use `--list` with the parent thread URI.
-- If the user asks for Pi session navigation targets, use `--list` with `agents://pi/<session_id>`.
+- If the user asks for subagent aggregation, use `-I/--head` with the parent thread URI and read `subagents`.
+- If the user asks for Pi session navigation targets, use `-I/--head` with `agents://pi/<session_id>` and read `entries`.
 - If the user requests exact records, read the `thread_source` path from frontmatter.
 - If the output is long, redirect to a temp file and grep/summarize based on the user request.
 - Do not infer or reinterpret thread meaning unless the user explicitly asks for analysis.
@@ -190,4 +190,4 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1
 ## Failure Handling
 
 - Common failures include invalid URI format, invalid mode combinations, and missing thread files.
-- Typical invalid mode example: `--list` with `agents://<provider>/<main_thread_id>/<agent_id>`.
+- Typical invalid flag example: `--list` is no longer supported; use `-I/--head`.
