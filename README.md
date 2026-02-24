@@ -14,7 +14,6 @@
   - <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi
   - <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
 - Unified URI scheme: `agents://<provider>/<thread_path>` is the primary format.
-- Legacy provider URIs (`codex://...`, `claude://...`, etc.) are still accepted for compatibility.
 - Default output is timeline markdown with user/assistant messages and compact markers.
 - `--raw` outputs raw thread records.
 - `--list` outputs subagent status aggregation for providers that support subagent transcripts.
@@ -65,7 +64,6 @@ scheme   provider thread_path (provider-specific: main thread, optional child th
 
 - Supported URIs:
   - `agents://amp/<thread_id>`
-  - legacy: `amp://<thread_id>`
 - Thread id format:
   - `T-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - Resolution:
@@ -83,7 +81,6 @@ xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
   - `agents://codex/<session_id>`
   - `agents://codex/threads/<session_id>`
   - `agents://codex/<main_session_id>/<agent_id>`
-  - legacy: `codex://<session_id>`, `codex://threads/<session_id>`, `codex://<main_session_id>/<agent_id>`
 - Subagent modes:
   - Aggregate: `xurl agents://codex/<main_session_id> --list`
   - Drill-down: `xurl agents://codex/<main_session_id>/<agent_id>`
@@ -104,7 +101,6 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1
 - Supported URIs:
   - `agents://claude/<session_id>`
   - `agents://claude/<main_session_id>/<agent_id>`
-  - legacy: `claude://<session_id>`, `claude://<main_session_id>/<agent_id>`
 - Subagent modes:
   - Aggregate: `xurl agents://claude/<main_session_id> --list`
   - Drill-down: `xurl agents://claude/<main_session_id>/<agent_id>`
@@ -120,7 +116,6 @@ xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
 
 - Supported URIs:
   - `agents://opencode/<session_id>`
-  - legacy: `opencode://<session_id>`
 - Example:
 
 ```bash
@@ -131,7 +126,6 @@ xurl agents://opencode/ses_43a90e3adffejRgrTdlJa48CtE
 
 - Supported URI:
   - `agents://gemini/<session_id>`
-  - legacy: `gemini://<session_id>`
 - Session id format:
   - `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - Resolution:
@@ -148,7 +142,6 @@ xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
 - Supported URIs:
   - `agents://pi/<session_id>`
   - `agents://pi/<session_id>/<entry_id>`
-  - legacy: `pi://<session_id>`, `pi://<session_id>/<entry_id>`
 - Session id format:
   - `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - Resolution:
